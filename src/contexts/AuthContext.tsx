@@ -44,16 +44,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<AuthError | null>(null)
+  const [supabase, setSupabase] = useState<ReturnType<typeof createClient> | null>(null)
 
-  const supabase = React.useMemo(() => {
-    const client = createClient()
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔧 [AuthContext] Supabase client initialized')
+  // Initialize Supabase client (async)
+  useEffect(() => {
+    let mounted = true
+
+    createClient().then(client => {
+      if (mounted) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔧 [AuthContext] Supabase client initialized')
+        }
+        setSupabase(client)
+      }
+    }).catch(err => {
+      console.error('❌ [AuthContext] Failed to initialize Supabase client:', err)
+      if (mounted) {
+        setError(err as AuthError)
+        setLoading(false)
+      }
+    })
+
+    return () => {
+      mounted = false
     }
-    return client
   }, [])
 
   const fetchProfile = async (userId: string) => {
+    if (!supabase) return null
+
     try {
       const { data, error } = await supabase
         .from('profiles_saas')
@@ -89,7 +108,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   useEffect(() => {
+    if (!supabase) return // Wait for supabase client to be initialized
+
     let mounted = true
+    let subscription: any = null
 
     // Get initial session
     const getInitialSession = async () => {
@@ -98,9 +120,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
           console.log('🔄 [AuthContext] Getting initial session')
         }
         const { data: { session }, error } = await supabase.auth.getSession()
-        
+
         if (!mounted) return
-        
+
         if (error) {
           console.error('❌ [AuthContext] Initial session error:', error)
           setError(error)
@@ -125,7 +147,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     // Listen for auth changes
     const {
-      data: { subscription },
+      data: { subscription: authSubscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (process.env.NODE_ENV === 'development') {
         console.log('🔄 [AuthContext] Auth state changed:', event, !!session)
@@ -135,16 +157,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
     })
 
+    subscription = authSubscription
+
     return () => {
       if (process.env.NODE_ENV === 'development') {
         console.log('🧹 [AuthContext] Cleaning up auth subscription')
       }
       mounted = false
-      subscription.unsubscribe()
+      subscription?.unsubscribe()
     }
-  }, []) // Dependencies handled via mounted flag
+  }, [supabase]) // Re-run when supabase client is ready
 
   const signUp = async (email: string, password: string, metadata?: { full_name?: string }) => {
+    if (!supabase) {
+      const error = new Error('Supabase client not initialized') as AuthError
+      setError(error)
+      return { error }
+    }
+
     setLoading(true)
     setError(null)
 
@@ -176,6 +206,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const signIn = async (email: string, password: string) => {
+    if (!supabase) {
+      const error = new Error('Supabase client not initialized') as AuthError
+      setError(error)
+      return { error }
+    }
+
     setLoading(true)
     setError(null)
 
@@ -201,6 +237,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const continueWithGoogle = async () => {
+    if (!supabase) {
+      const error = new Error('Supabase client not initialized') as AuthError
+      setError(error)
+      return { error }
+    }
+
     setLoading(true)
     setError(null)
 
@@ -231,6 +273,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const continueWithGitHub = async () => {
+    if (!supabase) {
+      const error = new Error('Supabase client not initialized') as AuthError
+      setError(error)
+      return { error }
+    }
+
     setLoading(true)
     setError(null)
 
@@ -258,6 +306,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const signOut = async () => {
+    if (!supabase) {
+      const error = new Error('Supabase client not initialized') as AuthError
+      setError(error)
+      return { error }
+    }
+
     console.log('🔄 [AuthContext] Starting sign out process')
     setLoading(true)
     setError(null)
@@ -304,17 +358,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const resetPassword = async (email: string) => {
+    if (!supabase) {
+      const error = new Error('Supabase client not initialized') as AuthError
+      setError(error)
+      return { error }
+    }
+
     setError(null)
 
     try {
       // Get the base URL - prefer environment variable, fallback to window.location
-      const baseUrl = typeof window !== 'undefined' 
+      const baseUrl = typeof window !== 'undefined'
         ? (process.env.NEXT_PUBLIC_APP_URL || window.location.origin)
         : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-      
+
       console.log('🔄 [AuthContext] Sending password reset email to:', email)
       console.log('🔄 [AuthContext] Redirect URL:', `${baseUrl}/auth/reset-password`)
-      
+
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${baseUrl}/auth/reset-password`,
         captchaToken: undefined // Explicitly set to avoid any captcha issues
@@ -337,6 +397,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const updatePassword = async (password: string) => {
+    if (!supabase) {
+      const error = new Error('Supabase client not initialized') as AuthError
+      setError(error)
+      return { error }
+    }
+
     setError(null)
 
     try {
@@ -358,6 +424,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const updateProfile = async (updates: Partial<Profile>) => {
+    if (!supabase) {
+      const error = new Error('Supabase client not initialized') as AuthError
+      setError(error)
+      return { error }
+    }
+
     if (!user) {
       const error = new Error('User not authenticated')
       setError(error as any)
@@ -393,6 +465,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const refreshSession = async () => {
+    if (!supabase) {
+      const error = new Error('Supabase client not initialized') as AuthError
+      setError(error)
+      return { error }
+    }
+
     setError(null)
 
     try {
