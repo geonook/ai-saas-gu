@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Zeabur deployment optimization
+  output: 'standalone',
+
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -10,6 +13,12 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ['@radix-ui/react-icons'],
   },
+
+  // Environment configuration
+  env: {
+    PORT: process.env.PORT || '8080',
+  },
+
   images: {
     remotePatterns: [
       {
