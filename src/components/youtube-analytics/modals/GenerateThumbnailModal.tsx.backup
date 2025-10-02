@@ -1,0 +1,709 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { X, Image, Sparkles, Loader2, FileText, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { LoadingSpinner } from '@/components/common/loading-spinner';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+
+interface GenerateThumbnailModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  originalImageUrl?: string;
+  thumbnailDescription?: string;
+}
+
+export const GenerateThumbnailModal = ({ 
+  isOpen, 
+  onClose,
+  originalImageUrl,
+  thumbnailDescription
+}: GenerateThumbnailModalProps) => {
+  const [prompt, setPrompt] = useState('');
+  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showDescription, setShowDescription] = useState(false);
+  const [importedFromDescription, setImportedFromDescription] = useState(false);
+  const [originalImageLoading, setOriginalImageLoading] = useState(true);
+  const [originalImageError, setOriginalImageError] = useState(false);
+  const [generatedImageLoading, setGeneratedImageLoading] = useState(false);
+  const [generatedImageError, setGeneratedImageError] = useState(false);
+  const [imageLoadTimeout, setImageLoadTimeout] = useState<NodeJS.Timeout | null>(null);
+
+  // Handle ESC key press to close modal
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = 'hidden';
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen, onClose]);
+
+  // Reset state when modal opens/closes
+  useEffect(() => {
+    if (!isOpen) {
+      setPrompt('');
+      setGeneratedImageUrl(null);
+      setIsGenerating(false);
+      setError(null);
+      setShowDescription(false);
+      setImportedFromDescription(false);
+      setOriginalImageLoading(true);
+      setOriginalImageError(false);
+      setGeneratedImageLoading(false);
+      setGeneratedImageError(false);
+    } else {
+      // Auto-expand description panel if available
+      setShowDescription(!!thumbnailDescription?.trim());
+      // Reset image loading states for new modal open
+      // Only set loading to true if we have an image URL
+      if (originalImageUrl) {
+        setOriginalImageLoading(true);
+        setOriginalImageError(false);
+      } else {
+        setOriginalImageLoading(false);
+        setOriginalImageError(false);
+      }
+      setGeneratedImageLoading(false);
+      setGeneratedImageError(false);
+    }
+  }, [isOpen, thumbnailDescription, originalImageUrl]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (imageLoadTimeout) {
+        clearTimeout(imageLoadTimeout);
+      }
+    };
+  }, [imageLoadTimeout]);
+
+  const handleGenerateImage = React.useCallback(async () => {
+    if (!prompt.trim()) {
+      setError('請輸入 prompt');
+      return;
+    }
+
+    if (!originalImageUrl) {
+      setError('缺少原始圖片 URL');
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      const webhookUrl = process.env.NEXT_PUBLIC_N8N_GENERATE_THUMBNAIL_WEBHOOK_URL || 'https://n8n.guccidgi.com/webhook-test/generate-yt-thumbnail';
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+      
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          image_url: originalImageUrl,
+          prompt: prompt.trim()
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const responseText = await response.text();
+      
+      // Try to parse JSON, with fallback handling
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        throw new Error(`API 回應格式錯誤: ${responseText.substring(0, 100)}...`);
+      }
+      
+      // Handle different webhook response formats with type safety
+      let imageUrl: string | null = null;
+      
+      if (typeof data.image === 'string') {
+        // Current n8n format: { image: "url" }
+        imageUrl = data.image;
+      } else if (Array.isArray(data) && data.length > 0 && data[0].images && Array.isArray(data[0].images) && data[0].images.length > 0) {
+        // Alternative n8n response format: [{ images: [{ url: "...", ... }] }]
+        imageUrl = data[0].images[0].url;
+      } else if (typeof data.url === 'string') {
+        // Direct URL format
+        imageUrl = data.url;
+      } else if (data.images && Array.isArray(data.images) && data.images.length > 0) {
+        // Alternative format: { images: [{ url: "...", ... }] }
+        imageUrl = data.images[0].url;
+      }
+      
+      if (imageUrl && typeof imageUrl === 'string') {
+        setGeneratedImageLoading(true);
+        setGeneratedImageUrl(imageUrl);
+      } else {
+        throw new Error('沒有接收到有效的圖片 URL');
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          setError('請求超時，請稍後再試');
+        } else {
+          setError(error.message);
+        }
+      } else {
+        setError('生成縮略圖時發生未知錯誤');
+      }
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [prompt, originalImageUrl]);
+
+  const handleRegenerateImage = React.useCallback(() => {
+    setGeneratedImageUrl(null);
+    setGeneratedImageLoading(false);
+    setGeneratedImageError(false);
+    setError(null);
+    handleGenerateImage();
+  }, [handleGenerateImage]);
+
+  // Import description into prompt - optimized with useCallback
+  const handleImportDescription = React.useCallback(() => {
+    if (thumbnailDescription?.trim()) {
+      setPrompt(thumbnailDescription.trim());
+      setImportedFromDescription(true);
+      // Hide the description panel after import for focused editing
+      setShowDescription(false);
+    }
+  }, [thumbnailDescription]);
+
+  // Image loading handlers - optimized with useCallback for performance
+  const handleOriginalImageLoad = React.useCallback(() => {
+    setOriginalImageLoading(false);
+    setOriginalImageError(false);
+    // Clear any existing timeout
+    if (imageLoadTimeout) {
+      clearTimeout(imageLoadTimeout);
+      setImageLoadTimeout(null);
+    }
+  }, [imageLoadTimeout]);
+
+  const handleOriginalImageError = React.useCallback(() => {
+    setOriginalImageLoading(false);
+    setOriginalImageError(true);
+    // Clear any existing timeout
+    if (imageLoadTimeout) {
+      clearTimeout(imageLoadTimeout);
+      setImageLoadTimeout(null);
+    }
+  }, [imageLoadTimeout]);
+
+  const handleGeneratedImageLoad = React.useCallback(() => {
+    setGeneratedImageLoading(false);
+    setGeneratedImageError(false);
+  }, []);
+
+  const handleGeneratedImageError = React.useCallback(() => {
+    setGeneratedImageLoading(false);
+    setGeneratedImageError(true);
+  }, []);
+
+  // Retry handlers - optimized with useCallback
+  const retryOriginalImageLoad = React.useCallback(() => {
+    if (!originalImageUrl) return;
+    
+    setOriginalImageLoading(true);
+    setOriginalImageError(false);
+    
+    // Clear any existing timeout
+    if (imageLoadTimeout) {
+      clearTimeout(imageLoadTimeout);
+    }
+    
+    // Set a timeout for image loading (30 seconds)
+    const timeout = setTimeout(() => {
+      setOriginalImageLoading(false);
+      setOriginalImageError(true);
+    }, 30000);
+    setImageLoadTimeout(timeout);
+    
+    // Create a new image to test if the URL is valid
+    const testImg = document.createElement('img');
+    testImg.onload = () => {
+      // If test image loads successfully, update the main image src to force reload
+      const mainImg = document.querySelector('img[alt="Original Thumbnail"]') as HTMLImageElement;
+      if (mainImg) {
+        // Add timestamp to force reload
+        const newUrl = originalImageUrl + (originalImageUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+        mainImg.src = newUrl;
+      } else {
+        // Fallback: just update the loading state
+        handleOriginalImageLoad();
+      }
+    };
+    testImg.onerror = () => {
+      handleOriginalImageError();
+    };
+    testImg.src = originalImageUrl + (originalImageUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+  }, [originalImageUrl, imageLoadTimeout, handleOriginalImageLoad, handleOriginalImageError]);
+
+  const retryGeneratedImageLoad = React.useCallback(() => {
+    if (!generatedImageUrl) return;
+    
+    setGeneratedImageLoading(true);
+    setGeneratedImageError(false);
+    
+    // Create a new image to test if the URL is valid
+    const testImg = document.createElement('img');
+    testImg.onload = () => {
+      // If test image loads successfully, update the main image src to force reload
+      const mainImg = document.querySelector('img[alt="Generated Thumbnail"]') as HTMLImageElement;
+      if (mainImg) {
+        // Add timestamp to force reload
+        const newUrl = generatedImageUrl + (generatedImageUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+        mainImg.src = newUrl;
+      } else {
+        // Fallback: just update the loading state
+        handleGeneratedImageLoad();
+      }
+    };
+    testImg.onerror = () => {
+      handleGeneratedImageError();
+    };
+    testImg.src = generatedImageUrl + (generatedImageUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+  }, [generatedImageUrl, handleGeneratedImageLoad, handleGeneratedImageError]);
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent 
+        className="max-w-5xl w-[92vw] max-h-[96vh] flex flex-col p-0 overflow-hidden"
+        showCloseButton={false}
+        positioning="center"
+        size="none"
+      >
+        {/* Accessibility-required components - must be direct children of DialogContent */}
+        <DialogTitle className="sr-only">生成縮略圖</DialogTitle>  
+        <DialogDescription className="sr-only">使用 AI 生成 YouTube 縮略圖</DialogDescription>
+        
+        {/* Visual Header */}
+        <div className="flex-shrink-0 p-3 sm:p-4 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 flex-1">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <Sparkles className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold">生成縮略圖</h2>
+                <p className="text-sm mt-1 text-muted-foreground">使用 AI 生成 YouTube 縮略圖</p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              title="關閉"
+              aria-label="關閉對話框"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* Input Section - Optimized */}
+          <div className="flex-shrink-0 p-4 sm:p-6 border-b border-gray-100">
+            <div className="flex flex-col lg:flex-row gap-6 sm:gap-8">
+            {/* Left Column - Reference Image */}
+            <div className="lg:w-2/5">
+              <div className="mb-3">
+                <h3 className="text-sm font-medium text-black mb-2">原始縮略圖</h3>
+                <div className="border border-gray-200 rounded-lg overflow-hidden bg-gray-50 relative">
+                  {originalImageUrl ? (
+                    <>
+                      {/* Loading Skeleton */}
+                      {originalImageLoading && (
+                        <div className="absolute inset-0 w-full aspect-video flex items-center justify-center bg-gray-100 z-10">
+                          <div className="text-center px-4">
+                            <div className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2 bg-gray-300 rounded-lg animate-pulse"></div>
+                            <div className="h-2 sm:h-3 bg-gray-300 rounded w-16 sm:w-20 mx-auto animate-pulse"></div>
+                            <div className="mt-2">
+                              <div className="inline-flex items-center px-2 py-1 bg-gray-200 rounded-full">
+                                <svg className="w-3 h-3 mr-1 animate-spin text-gray-500" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span className="text-xs text-gray-600">圖片載入中，請稍候...</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Error State */}
+                      {originalImageError && (
+                        <div className="absolute inset-0 w-full aspect-video flex items-center justify-center bg-red-50 z-10">
+                          <div className="text-center px-4">
+                            <div className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2 bg-red-200 rounded-lg flex items-center justify-center">
+                              <svg className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.96-.833-2.73 0L3.084 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                              </svg>
+                            </div>
+                            <p className="text-xs sm:text-sm text-red-600 mb-1">圖片載入失敗</p>
+                            <p className="text-xs text-red-500 mb-2">可能是網路連線問題或圖片已失效</p>
+                            <button 
+                              onClick={retryOriginalImageLoad}
+                              className="px-2 py-1 text-xs text-white bg-red-600 hover:bg-red-700 rounded transition-colors"
+                            >
+                              重新載入
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Actual Image */}
+                      <img
+                        src={originalImageUrl}
+                        alt="Original Thumbnail"
+                        className={`w-full aspect-video object-cover transition-opacity duration-300 ${
+                          originalImageLoading || originalImageError ? 'opacity-0' : 'opacity-100'
+                        }`}
+                        onLoad={handleOriginalImageLoad}
+                        onError={handleOriginalImageError}
+                        // Add loading timeout on mount
+                        onLoadStart={() => {
+                          if (imageLoadTimeout) {
+                            clearTimeout(imageLoadTimeout);
+                          }
+                          const timeout = setTimeout(() => {
+                            setOriginalImageLoading(false);
+                            setOriginalImageError(true);
+                          }, 30000);
+                          setImageLoadTimeout(timeout);
+                        }}
+                        // Force onLoad check if image is already cached
+                        ref={(img) => {
+                          if (img && img.complete && img.naturalWidth > 0) {
+                            handleOriginalImageLoad();
+                          }
+                        }}
+                      />
+                    </>
+                  ) : (
+                    <div className="w-full aspect-video flex items-center justify-center">
+                      <div className="text-center">
+                        <Image className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                        <p className="text-sm text-gray-500">無原始圖片</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column - Prompt Input with Description Reference */}
+            <div className="lg:w-3/5">
+              {/* Thumbnail Description Reference Panel */}
+              {thumbnailDescription?.trim() && (
+                <div className="mb-5">
+                  <button 
+                    className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-100 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 w-full"
+                    onClick={() => setShowDescription(!showDescription)}
+                    aria-expanded={showDescription}
+                    aria-controls="thumbnail-description-content"
+                    type="button"
+                  >
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-blue-600" />
+                      <span className="text-sm font-medium text-blue-800">
+                        現有縮略圖描述
+                      </span>
+                      {importedFromDescription && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          已匯入
+                        </span>
+                      )}
+                    </div>
+                    {showDescription ? (
+                      <ChevronUp className="h-4 w-4 text-blue-600" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-blue-600" />
+                    )}
+                  </button>
+                  
+                  {showDescription && (
+                    <div 
+                      id="thumbnail-description-content"
+                      className="mt-2 bg-gray-50 border border-gray-200 rounded-lg overflow-hidden flex flex-col"
+                      role="region"
+                      aria-label="現有縮略圖描述內容"
+                    >
+                      {/* Scrollable content area */}
+                      <div className="p-4 overflow-y-auto max-h-40 flex-1">
+                        <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                          {thumbnailDescription}
+                        </p>
+                      </div>
+                      
+                      {/* Fixed button at bottom */}
+                      <div className="p-3 border-t border-gray-300 bg-white rounded-b-lg">
+                        <Button
+                          onClick={handleImportDescription}
+                          size="sm"
+                          variant="outline"
+                          className="w-full flex items-center gap-2 text-blue-700 border-blue-300 hover:bg-blue-50 focus:ring-2 focus:ring-blue-500 shadow-sm"
+                          disabled={isGenerating}
+                          aria-describedby="import-description-help"
+                        >
+                          <Download className="h-3 w-3" />
+                          匯入到提示詞中
+                        </Button>
+                        <p id="import-description-help" className="sr-only">
+                          點擊此按鈕將現有描述匯入到提示詞輸入框中
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="mb-3">
+                <label 
+                  htmlFor="prompt" 
+                  className="block text-sm font-medium mb-2 text-black"
+                >
+                  描述你想要的縮略圖Prompt
+                  {importedFromDescription && (
+                    <span className="ml-2 text-xs text-green-600 font-normal">
+                      (已從描述匯入)
+                    </span>
+                  )}
+                </label>
+                <Textarea
+                  id="prompt"
+                  value={prompt}
+                  onChange={(e) => {
+                    setPrompt(e.target.value);
+                    if (importedFromDescription && e.target.value !== thumbnailDescription?.trim()) {
+                      setImportedFromDescription(false);
+                    }
+                  }}
+                  placeholder={thumbnailDescription?.trim() 
+                    ? "點擊上方面板匯入現有描述，或在此輸入新的提示詞..."
+                    : "參考左側原始縮略圖，描述你想要的改動，例如：改變背景顏色為藍色，加大標題字體，添加更多視覺元素..."
+                  }
+                  rows={8}
+                  className="w-full px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent resize-none bg-background text-foreground placeholder:text-muted-foreground"
+                  disabled={isGenerating}
+                />
+                {error && (
+                  <p className="mt-2 text-sm font-medium text-red-600">{error}</p>
+                )}
+              </div>
+
+              {/* Generate Button */}
+              <div>
+                {!generatedImageUrl ? (
+                  <Button
+                    onClick={handleGenerateImage}
+                    disabled={isGenerating || !prompt.trim()}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        生成中...
+                      </>
+                    ) : (
+                      <>
+                        <Image className="h-4 w-4 mr-2" />
+                        生成縮略圖
+                      </>
+                    )}
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={handleRegenerateImage}
+                    disabled={isGenerating}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        重新生成中...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        重新生成
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            </div>
+            </div>
+          </div>
+
+          {/* Results Section - Scrollable */}
+          <div className="flex-1 overflow-y-auto min-h-0 p-4 sm:p-5">
+            {/* Generated Image Display - Result Focused */}
+            {isGenerating && (
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 min-h-[180px] sm:min-h-[240px] flex items-center justify-center bg-gray-50">
+                <div className="text-center max-w-sm">
+                  <LoadingSpinner className="mx-auto mb-4" />
+                  <p className="font-medium text-black text-lg mb-2">AI 正在生成你的縮略圖...</p>
+                  <p className="text-sm text-gray-600">這可能需要幾秒鐘時間，請稍候</p>
+                </div>
+              </div>
+            )}
+
+          {/* Generated Result - Hero Display */}
+          {generatedImageUrl && (
+            <div className="border-t border-gray-200 pt-4 mt-4">
+              {/* Success Message */}
+              <div className="flex items-center justify-center gap-2 mb-3 p-2.5 sm:p-3 bg-green-50 border border-green-200 rounded-lg mx-auto max-w-xl">
+                <div className="flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 bg-green-100 rounded-full flex-shrink-0">
+                  <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-green-800 leading-tight">
+                    縮略圖生成完成
+                  </p>
+                </div>
+              </div>
+
+
+              
+              {/* Adaptive Generated Image */}
+              <div className="w-full max-w-3xl mx-auto mb-4">
+                <div className="relative">
+                  {/* Loading Skeleton for Generated Image */}
+                  {generatedImageLoading && (
+                    <div className="absolute inset-0 w-full max-h-[40vh] sm:max-h-[45vh] aspect-video bg-gray-100 rounded-lg shadow-lg border border-gray-200 flex items-center justify-center z-10">
+                      <div className="text-center px-4">
+                        <div className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-2 sm:mb-3 bg-gray-300 rounded-lg animate-pulse"></div>
+                        <div className="h-2 sm:h-3 bg-gray-300 rounded w-20 sm:w-24 mx-auto mb-2 animate-pulse"></div>
+                        <div className="h-1.5 sm:h-2 bg-gray-300 rounded w-14 sm:w-16 mx-auto mb-3 animate-pulse"></div>
+                        <div className="inline-flex items-center px-2 sm:px-3 py-1 sm:py-1.5 bg-gray-200 rounded-full">
+                          <svg className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2 animate-spin text-gray-500" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <span className="text-xs sm:text-sm text-gray-600">生成的圖片載入中，請稍候...</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Error State for Generated Image */}
+                  {generatedImageError && (
+                    <div className="absolute inset-0 w-full max-h-[40vh] sm:max-h-[45vh] aspect-video bg-red-50 rounded-lg shadow-lg border border-red-200 flex items-center justify-center z-10">
+                      <div className="text-center px-4">
+                        <div className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-2 sm:mb-3 bg-red-200 rounded-lg flex items-center justify-center">
+                          <svg className="w-6 h-6 sm:w-8 sm:h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.96-.833-2.73 0L3.084 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                          </svg>
+                        </div>
+                        <p className="text-xs sm:text-sm text-red-600 mb-1">圖片載入失敗</p>
+                        <p className="text-xs text-red-500 mb-2">可能是網路連線問題或圖片已失效</p>
+                        <button 
+                          onClick={retryGeneratedImageLoad}
+                          className="px-2 py-1 text-xs text-white bg-red-600 hover:bg-red-700 rounded transition-colors"
+                        >
+                          重新載入
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Actual Generated Image */}
+                  <img
+                    src={generatedImageUrl}
+                    alt="Generated Thumbnail"
+                    className={`w-full max-h-[40vh] sm:max-h-[45vh] object-contain rounded-lg shadow-lg border border-gray-200 bg-gray-50 transition-opacity duration-300 ${
+                      generatedImageLoading || generatedImageError ? 'opacity-0' : 'opacity-100'
+                    }`}
+                    style={{ aspectRatio: '16/9' }}
+                    onLoad={handleGeneratedImageLoad}
+                    onError={handleGeneratedImageError}
+                    // Force onLoad check if image is already cached
+                    ref={(img) => {
+                      if (img && img.complete && img.naturalWidth > 0) {
+                        handleGeneratedImageLoad();
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons - Always visible when generatedImageUrl exists */}
+              <div className="flex flex-col sm:flex-row gap-3 justify-center px-4 sm:px-0 mt-8 relative z-30">
+                <Button
+                  onClick={handleRegenerateImage}
+                  disabled={isGenerating}
+                  size="lg"
+                  className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 border-0 min-w-[140px] flex items-center justify-center gap-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>重新生成中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-4 w-4" />
+                      <span>重新生成</span>
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (generatedImageUrl) {
+                      navigator.clipboard.writeText(generatedImageUrl);
+                    }
+                  }}
+                  size="lg"
+                  variant="outline"
+                  className="px-6 py-3 bg-white hover:bg-gray-50 disabled:bg-gray-100 border-2 border-gray-300 hover:border-gray-400 disabled:border-gray-200 text-gray-700 hover:text-gray-900 disabled:text-gray-400 font-medium rounded-lg shadow-md hover:shadow-lg transition-all duration-200 min-w-[140px] flex items-center justify-center gap-2"
+                  disabled={isGenerating}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  <span>複製連結</span>
+                </Button>
+              </div>
+            </div>
+          )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};

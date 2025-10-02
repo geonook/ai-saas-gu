@@ -1,0 +1,16 @@
+{
+  "name": "SaaSonic - Build Your SaaS at Sonic Speed",
+  "short_name": "SaaSonic",
+  "description": "Everything you need to build, launch, and scale your SaaS",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}
