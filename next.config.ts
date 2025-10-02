@@ -19,6 +19,24 @@ const nextConfig: NextConfig = {
     PORT: process.env.PORT || '8080',
   },
 
+  // Webpack configuration for Web Workers support
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      // Configure Worker loading rules
+      config.module.rules.push({
+        test: /\.worker\.(js|ts)$/,
+        use: {
+          loader: 'worker-loader',
+          options: {
+            filename: 'static/[hash].worker.js',
+            publicPath: '/_next/'
+          }
+        }
+      })
+    }
+    return config
+  },
+
   images: {
     remotePatterns: [
       {
@@ -27,6 +45,7 @@ const nextConfig: NextConfig = {
         pathname: '/**',
       },
     ],
+    domains: ['localhost'],
   },
   async headers() {
     return [
